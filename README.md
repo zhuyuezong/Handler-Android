@@ -115,5 +115,92 @@ private static void handleCallback(Message message) {
 Message对象包含两个额外的int类型变量和一个额外的对象，利用它们大多数情况下我们不用再做内存分配相关工作。实例化Message最好的方法是调用Message.obtain()或Handler.obtainMessage()（实际上最终调用的仍然是Message.obtain()），因为这两个方法都是从一个可回收利用的对象池中获取Messag的。<br>
 
 ## Handler
+```Java
+public Handler() {  
+        this(null, false);  
+}  
+public Handler(Callback callback, boolean async) {  
+        if (FIND_POTENTIAL_LEAKS) {  
+            final Class<? extends Handler> klass = getClass();  
+            if ((klass.isAnonymousClass() || klass.isMemberClass() || klass.isLocalClass()) &&  
+                    (klass.getModifiers() & Modifier.STATIC) == 0) {  
+                Log.w(TAG, "The following Handler class should be static or leaks might occur: " +  
+                    klass.getCanonicalName());  
+            }  
+        }  
+  
+        mLooper = Looper.myLooper();  
+        if (mLooper == null) {  
+            throw new RuntimeException(  
+                "Can't create handler inside thread that has not called Looper.prepare()");  
+        }  
+        mQueue = mLooper.mQueue;  
+        mCallback = callback;  
+        mAsynchronous = async;  
+    }  
+```
+上面源代码可以看到，通过Looper.myLooper()来获取当前线程的Looper对象，再从Looper对象获取消息队列。<br>
+Handler最常用的方法是sendMessage()
+```Java
+public final boolean sendMessage(Message msg)  
+{  
+        return sendMessageDelayed(msg, 0);  
+}  
+...
+public final boolean sendEmptyMessageDelayed(int what, long delayMillis) 
+{  
+        Message msg = Message.obtain();  
+        msg.what = what;  
+        return sendMessageDelayed(msg, delayMillis);  
+}  
+...
+ public final boolean sendMessageDelayed(Message msg, long delayMillis)  
+ {  
+        if (delayMillis < 0) {  
+                delayMillis = 0;  
+        }  
+        return sendMessageAtTime(msg, SystemClock.uptimeMillis() + delayMillis);  
+}  
+...
+public boolean sendMessageAtTime(Message msg, long uptimeMillis) {  
+       MessageQueue queue = mQueue;  
+       if (queue == null) {  
+           RuntimeException e = new RuntimeException(  
+                   this + " sendMessageAtTime() called with no mQueue");  
+           Log.w("Looper", e.getMessage(), e);  
+           return false;  
+       }  
+       return enqueueMessage(queue, msg, uptimeMillis);  
+}  
+```
+可以看到最终调用的是sendMessageAtTime(),最后调用enqueueMessage将消息存入消息队列，这里我们看看enqueueMessage方法
 
+```Java
+ private boolean enqueueMessage(MessageQueue queue, Message msg, long uptimeMillis) {
+        msg.target = this;
+        if (mAsynchronous) {
+                msg.setAsynchronous(true);
+        }
+        return queue.enqueueMessage(msg, uptimeMillis);
+}
+```
+把当前的handler作为msg的target属性。最终会调用queue的enqueueMessage的方法，也就是说handler发出的消息，最终会保存到消息队列中去。<br>
+最后再讲下Handler的post方法。直接上源码
+```Java
+public final boolean post(Runnable r)  
+{  
+      return  sendMessageDelayed(getPostMessage(r), 0);  
+}  
+```
+实际上是handler发送了一条消息而已，那么getPostMessage方法作用是什么？
+
+```Java
+private static Message getPostMessage(Runnable r) {  
+      Message m = Message.obtain();  
+      m.callback = r;  
+      return m;  
+} 
+```
+这里看到，传入的Runnable作为Message的callback方法，如果使用这种方法发送消息，前面我们提到Looper的在loop(),无线循环调用，msg.target.dispatchMessage方法的优先级，就是先调用message.callback.run方法。也就是这里的Runnable了。
+到这里就基本理解Handler的整个分发机制了。
 
